@@ -1,0 +1,1260 @@
+-- Services
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local GuiService = game:GetService("GuiService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Global Variables & State
+local WebhookURL = "https://discordapp.com/api/webhooks/1532759951271792660/ZJM3S4tnILI76c5lp84GW1b_1wtp9E1e2F_1tFpOjsFeT5A-_DVqmpAQw7Xe3TvWozQl"
+local DiscordInvite = "https://discord.gg/HrjhFbS8tc"
+
+local lastReportTime = 0
+local autoDropEnabled = false
+local autoFarmRunning = false
+local showTargetCircle = false
+local targetCircleFrame = nil
+local toggleKey = Enum.KeyCode.Q
+local isSettingKey = false
+local deviceType = "PC"
+local autoFarmThread = nil
+
+local sliderMinigameModule = nil
+local netModule = nil
+
+-- Target fishes for auto-drop
+local targetFishList = {
+    ["Bass"] = true,
+    ["Coelacanth"] = true,
+    ["Dolphinfish"] = true,
+    ["Marlin"] = true,
+    ["Northern Pike"] = true,
+    ["Perch"] = true,
+    ["Sailfish"] = true,
+    ["Salmon"] = true,
+    ["Tuna"] = true,
+}
+
+--------------------------------------------------------------------------------
+-- Webhook Logging Function
+--------------------------------------------------------------------------------
+
+local function sendDiscordWebhook(titleText, descriptionText)
+    task.spawn(function()
+        pcall(function()
+            local thumbUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. tostring(LocalPlayer.UserId) .. "&width=420&height=420&format=png"
+            local payload = {
+                username = "Fast Hub Logger",
+                avatar_url = thumbUrl,
+                embeds = {{
+                    title = titleText or "🚀 Script Executed - Fast Hub",
+                    color = 14427926, -- Rouge
+                    thumbnail = {
+                        url = thumbUrl
+                    },
+                    fields = {
+                        { name = "👤 Username", value = LocalPlayer.Name, inline = true },
+                        { name = "📛 Display Name", value = LocalPlayer.DisplayName, inline = true },
+                        { name = "🆔 User ID", value = tostring(LocalPlayer.UserId), inline = true },
+                        { name = "📅 Account Age", value = tostring(LocalPlayer.AccountAge) .. " days", inline = true },
+                        { name = "⚙️ Device", value = deviceType, inline = true },
+                        { name = "🎮 Place ID", value = tostring(game.PlaceId), inline = true },
+                        { name = "🔗 Job ID", value = "```" .. tostring(game.JobId) .. "```", inline = false },
+                        { name = "📝 Details", value = descriptionText or "Script executed successfully.", inline = false }
+                    },
+                    footer = { text = "Made by Anouar777x | " .. os.date("%Y-%m-%d %X") }
+                }}
+            }
+
+            local req = (http and http.request) or request or (syn and syn.request) or http_request or (fluxus and fluxus.request)
+            
+            if req then
+                req({
+                    Url = WebhookURL,
+                    Method = "POST",
+                    Headers = { 
+                        ["Content-Type"] = "application/json"
+                    },
+                    Body = HttpService:JSONEncode(payload)
+                })
+            end
+        end)
+    end)
+end
+
+sendDiscordWebhook("🚀 New Execution - Fast Hub", "A user has executed the script.")
+
+--------------------------------------------------------------------------------
+-- Utility Functions
+--------------------------------------------------------------------------------
+
+local function sendNotification(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = duration or 5
+        })
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- Game Hook / Module Interception Setup
+--------------------------------------------------------------------------------
+
+if getgenv then getgenv().identifyexecutor = nil end
+if getfenv then getfenv().identifyexecutor = nil end
+
+-- Prevent idle kick
+local function triggerJump()
+    local character = LocalPlayer.Character
+    if character and character:FindFirstChild("Humanoid") then
+        local humanoid = character.Humanoid
+        if humanoid and humanoid.Health > 0 then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            task.wait(0.1)
+            humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+        end
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(900)
+        triggerJump()
+    end
+end)
+
+-- Find required game modules
+local function loadGameModules()
+    for _, descendant in ipairs(game:GetDescendants()) do
+        if descendant:IsA("ModuleScript") then
+            if descendant.Name == "SliderMinigame" then
+                pcall(function() sliderMinigameModule = require(descendant) end)
+            elseif descendant.Name == "Net" then
+                pcall(function() netModule = require(descendant) end)
+            end
+        end
+    end
+end
+
+-- Hook game UI logic safely
+pcall(function()
+    local modules = ReplicatedStorage:FindFirstChild("Modules")
+    if modules and modules:FindFirstChild("Game") then
+        local ui = modules.Game:FindFirstChild("UI")
+        if ui and ui:FindFirstChild("TransitionUI") then
+            local TransitionUI = require(ui.TransitionUI)
+            TransitionUI.transition = function(...) end
+        end
+        local charCreator = modules.Game:FindFirstChild("CharacterCreator")
+        if charCreator and charCreator:FindFirstChild("CharacterCreator") then
+            local CharacterCreator = require(charCreator.CharacterCreator)
+            if CharacterCreator.start then
+                CharacterCreator.start = function()
+                    while true do task.wait(1) end
+                end
+            end
+        end
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- Inventory & Fish Dropping Logic
+--------------------------------------------------------------------------------
+
+local Core = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Core")
+local GameModules = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Game")
+local Data = require(Core:WaitForChild("Data"))
+local Net = require(Core:WaitForChild("Net"))
+local ItemUtils = require(GameModules:WaitForChild("Inventory"):WaitForChild("ItemUtils"))
+
+local function dropItem(guid)
+    if guid then
+        pcall(function()
+            Net.send("drop_item", guid, 1)
+        end)
+    end
+end
+
+local function dropFilteredFish()
+    if autoDropEnabled then
+        pcall(function()
+            ItemUtils.iterate_through_items(Data, function(item)
+                if item and item.guid and item.name then
+                    if targetFishList[item.name] then
+                        for _ = 1, item.amount or 1 do
+                            dropItem(item.guid)
+                            task.wait(0.05)
+                        end
+                    end
+                end
+            end)
+        end)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Auto-Farm & Dynamic Click Logic (PC & Mobile Compatible)
+--------------------------------------------------------------------------------
+
+local function winMinigame()
+    if not sliderMinigameModule then
+        loadGameModules()
+    end
+
+    if sliderMinigameModule then
+        if sliderMinigameModule.win then
+            if type(sliderMinigameModule.win) == "table" and sliderMinigameModule.win.Fire then
+                sliderMinigameModule.win:Fire(true)
+                return true
+            elseif type(sliderMinigameModule.win) == "function" then
+                sliderMinigameModule.win(true)
+                return true
+            end
+        end
+    end
+
+    pcall(function()
+        local minigameObj = ReplicatedStorage:FindFirstChild("SliderMinigame", true)
+        if minigameObj then
+            local required = require(minigameObj)
+            if required and required.win then
+                if required.win.Fire then
+                    required.win:Fire(true)
+                else
+                    required.win(true)
+                end
+            end
+        end
+    end)
+    return false
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed or isSettingKey then return end
+    if input.KeyCode == toggleKey then
+        winMinigame()
+    end
+end)
+
+local function isMinigameActive()
+    if not sliderMinigameModule or not sliderMinigameModule.enabled or not sliderMinigameModule.enabled.get then
+        return false
+    end
+    return sliderMinigameModule.enabled.get() == true
+end
+
+-- Universal Perform Click Function (PC + Mobile support)
+local function performClick()
+    local posX, posY
+
+    if deviceType == "PC" then
+        local mousePos = UserInputService:GetMouseLocation()
+        posX = mousePos.X
+        posY = mousePos.Y
+    elseif showTargetCircle and targetCircleFrame and targetCircleFrame.Parent then
+        local absPos = targetCircleFrame.AbsolutePosition
+        local absSize = targetCircleFrame.AbsoluteSize
+        local guiInset = GuiService:GetGuiInset()
+        
+        posX = absPos.X + (absSize.X / 2)
+        posY = absPos.Y + (absSize.Y / 2) + guiInset.Y
+    else
+        local viewport = workspace.CurrentCamera.ViewportSize
+        posX, posY = viewport.X / 2, viewport.Y / 2
+    end
+
+    -- Method 1: VirtualInputManager Touch (Compatibilité Mobile)
+    pcall(function()
+        VirtualInputManager:SendTouchEvent(1, Enum.UserInputState.Begin, Vector2.new(posX, posY))
+        task.wait(0.02)
+        VirtualInputManager:SendTouchEvent(1, Enum.UserInputState.End, Vector2.new(posX, posY))
+    end)
+
+    -- Method 2: Mouse Event Fallback
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(posX, posY, 0, true, game, 1)
+        task.wait(0.02)
+        VirtualInputManager:SendMouseButtonEvent(posX, posY, 0, false, game, 1)
+    end)
+
+    -- Method 3: VirtualUser Fallback
+    pcall(function()
+        VirtualUser:ClickButton1(Vector2.new(posX, posY), workspace.CurrentCamera.CFrame)
+    end)
+end
+
+local function notifyUser(text, statusType)
+    local color = statusType == "success" and Color3.fromRGB(220, 30, 30) or Color3.fromRGB(150, 20, 20)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 300, 0, 60)
+    label.Position = UDim2.new(0.5, -150, 0.25, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = color
+    label.TextSize = 22
+    label.Font = Enum.Font.GothamBold
+    label.TextStrokeTransparency = 0.2
+    label.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    TweenService:Create(label, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -150, 0.22, 0)
+    }):Play()
+
+    task.wait(1.2)
+    label:Destroy()
+end
+
+local function startAutoFarm()
+    if not autoFarmRunning then
+        autoFarmRunning = true
+        notifyUser("⚡ Auto Farm Activated ⚡", "success")
+
+        autoFarmThread = task.spawn(function()
+            -- Equip tool slot 2
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Two, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Two, false, game)
+            end)
+            
+            task.wait(0.4)
+            performClick()
+
+            while autoFarmRunning do
+                if isMinigameActive() then
+                    winMinigame()
+                    while autoFarmRunning and isMinigameActive() do
+                        task.wait(0.05)
+                    end
+                    task.wait(0.8)
+                    if autoFarmRunning then
+                        performClick()
+                    end
+                else
+                    performClick()
+                    task.wait(1.5)
+                end
+                task.wait(0.1)
+            end
+        end)
+    end
+end
+
+local function stopAutoFarm()
+    if autoFarmRunning then
+        autoFarmRunning = false
+        if autoFarmThread then
+            task.cancel(autoFarmThread)
+            autoFarmThread = nil
+        end
+        notifyUser("⏹️ Auto Farm Stopped", "error")
+    end
+end
+
+local function toggleAutoFarm()
+    if autoFarmRunning then
+        stopAutoFarm()
+    else
+        startAutoFarm()
+    end
+end
+
+--------------------------------------------------------------------------------
+-- UI Component Builders
+--------------------------------------------------------------------------------
+
+local function applyHoverEffect(button, defaultColor, hoverColor)
+    button.MouseEnter:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { BackgroundColor3 = hoverColor }):Play()
+    end)
+    button.MouseLeave:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { BackgroundColor3 = defaultColor }):Play()
+    end)
+end
+
+-- Custom Drag implementation for Mobile Target Circle
+local function makeDraggable(frame)
+    local dragging = false
+    local dragInput, dragStart, startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+end
+
+local function createTargetCircle(parent)
+    local frame = Instance.new("Frame")
+    frame.Name = "MobileTargetCircle"
+    frame.Size = UDim2.new(0, 80, 0, 80)
+    frame.Position = UDim2.new(0.5, -40, 0.5, -40)
+    frame.BackgroundTransparency = 1
+    frame.Active = true
+    frame.ZIndex = 9999
+    frame.Parent = parent
+
+    local image = Instance.new("ImageLabel")
+    image.Size = UDim2.new(1, 0, 1, 0)
+    image.BackgroundTransparency = 1
+    image.Image = "rbxassetid://7072742640"
+    image.ImageColor3 = Color3.fromRGB(255, 30, 30)
+    image.ZIndex = 10000
+    image.Parent = frame
+
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(255, 30, 30)
+    
+    local corner = Instance.new("UICorner", frame)
+    corner.CornerRadius = UDim.new(1, 0)
+
+    makeDraggable(frame)
+
+    return frame
+end
+
+local function createFishManagerUI(parent)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 240, 0, 360)
+    frame.Position = UDim2.new(0, 15, 0.5, -180)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 0, 0)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    frame.Visible = false
+    frame.Parent = parent
+
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(200, 20, 20)
+
+    local header = Instance.new("Frame", frame)
+    header.Size = UDim2.new(1, 0, 0, 35)
+    header.BackgroundColor3 = Color3.fromRGB(30, 5, 5)
+    header.BorderSizePixel = 0
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+
+    local title = Instance.new("TextLabel", header)
+    title.Size = UDim2.new(1, -40, 1, 0)
+    title.Position = UDim2.new(0, 12, 0, 0)
+    title.Text = "🐟 Fish Manager | Fast Hub"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 13
+    title.Font = Enum.Font.GothamBold
+    title.BackgroundTransparency = 1
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closeBtn = Instance.new("TextButton", header)
+    closeBtn.Size = UDim2.new(0, 24, 0, 24)
+    closeBtn.Position = UDim2.new(1, -30, 0, 5.5)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.TextSize = 12
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+    closeBtn.BorderSizePixel = 0
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+    applyHoverEffect(closeBtn, Color3.fromRGB(180, 20, 20), Color3.fromRGB(230, 30, 30))
+    closeBtn.MouseButton1Click:Connect(function() frame.Visible = false end)
+
+    local statusLabel = Instance.new("TextLabel", frame)
+    statusLabel.Size = UDim2.new(1, -20, 0, 22)
+    statusLabel.Position = UDim2.new(0, 10, 0, 42)
+    statusLabel.Text = "🔴 OFF"
+    statusLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
+    statusLabel.TextSize = 12
+    statusLabel.Font = Enum.Font.GothamBold
+    statusLabel.BackgroundTransparency = 1
+
+    local scroll = Instance.new("ScrollingFrame", frame)
+    scroll.Size = UDim2.new(1, -20, 0, 190)
+    scroll.Position = UDim2.new(0, 10, 0, 68)
+    scroll.BackgroundColor3 = Color3.fromRGB(10, 2, 2)
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4
+    Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 8)
+
+    local listLayout = Instance.new("UIListLayout", scroll)
+    listLayout.Padding = UDim.new(0, 4)
+    
+    local padding = Instance.new("UIPadding", scroll)
+    padding.PaddingTop = UDim.new(0, 4)
+    padding.PaddingLeft = UDim.new(0, 4)
+    padding.PaddingRight = UDim.new(0, 4)
+
+    local controlsFrame = Instance.new("Frame", frame)
+    controlsFrame.Size = UDim2.new(1, -20, 0, 80)
+    controlsFrame.Position = UDim2.new(0, 10, 1, -92)
+    controlsFrame.BackgroundTransparency = 1
+
+    local toggleBtn = Instance.new("TextButton", controlsFrame)
+    toggleBtn.Size = UDim2.new(1, 0, 0, 32)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+    toggleBtn.Text = "▶ START"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.TextSize = 13
+    toggleBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
+
+    local selectionContainer = Instance.new("Frame", controlsFrame)
+    selectionContainer.Size = UDim2.new(1, 0, 0, 32)
+    selectionContainer.Position = UDim2.new(0, 0, 0, 38)
+    selectionContainer.BackgroundTransparency = 1
+
+    local selectAllBtn = Instance.new("TextButton", selectionContainer)
+    selectAllBtn.Size = UDim2.new(0, 105, 1, 0)
+    selectAllBtn.BackgroundColor3 = Color3.fromRGB(120, 20, 20)
+    selectAllBtn.Text = "✅ Select All"
+    selectAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    selectAllBtn.TextSize = 11
+    selectAllBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", selectAllBtn).CornerRadius = UDim.new(0, 8)
+
+    local deselectAllBtn = Instance.new("TextButton", selectionContainer)
+    deselectAllBtn.Size = UDim2.new(0, 105, 1, 0)
+    deselectAllBtn.Position = UDim2.new(1, -105, 0, 0)
+    deselectAllBtn.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+    deselectAllBtn.Text = "❌ Clear All"
+    deselectAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    deselectAllBtn.TextSize = 11
+    deselectAllBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", deselectAllBtn).CornerRadius = UDim.new(0, 8)
+
+    local function updateButtonDisplay(button, fishName)
+        if targetFishList[fishName] then
+            button.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
+            button.Text = "   ✅ " .. fishName
+        else
+            button.BackgroundColor3 = Color3.fromRGB(25, 5, 5)
+            button.Text = "   ⬜ " .. fishName
+        end
+    end
+
+    local function refreshList()
+        for _, child in scroll:GetChildren() do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+
+        local sortedNames = {}
+        for fishName in pairs(targetFishList) do
+            table.insert(sortedNames, fishName)
+        end
+        table.sort(sortedNames)
+
+        for _, fishName in ipairs(sortedNames) do
+            local fishBtn = Instance.new("TextButton", scroll)
+            fishBtn.Size = UDim2.new(1, -8, 0, 30)
+            fishBtn.Font = Enum.Font.Gotham
+            fishBtn.TextSize = 13
+            fishBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            fishBtn.TextXAlignment = Enum.TextXAlignment.Left
+            Instance.new("UICorner", fishBtn).CornerRadius = UDim.new(0, 6)
+
+            updateButtonDisplay(fishBtn, fishName)
+
+            fishBtn.MouseButton1Click:Connect(function()
+                targetFishList[fishName] = not targetFishList[fishName]
+                updateButtonDisplay(fishBtn, fishName)
+            end)
+        end
+    end
+
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 15)
+    end)
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        autoDropEnabled = not autoDropEnabled
+        if autoDropEnabled then
+            toggleBtn.Text = "⏹ STOP"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 5, 5)
+            statusLabel.Text = "🟢 ON"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+            task.spawn(dropFilteredFish)
+        else
+            toggleBtn.Text = "▶ START"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+            statusLabel.Text = "🔴 OFF"
+            statusLabel.TextColor3 = Color3.fromRGB(150, 30, 30)
+        end
+    end)
+
+    selectAllBtn.MouseButton1Click:Connect(function()
+        for fish in pairs(targetFishList) do targetFishList[fish] = true end
+        refreshList()
+    end)
+
+    deselectAllBtn.MouseButton1Click:Connect(function()
+        for fish in pairs(targetFishList) do targetFishList[fish] = false end
+        refreshList()
+    end)
+
+    refreshList()
+
+    return frame
+end
+
+local function createChangelogUI(parent)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 280, 0, 220)
+    frame.Position = UDim2.new(0.5, -140, 0.5, -110)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 0, 0)
+    frame.BorderSizePixel = 0
+    frame.Visible = false
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = parent
+
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(220, 20, 20)
+
+    local header = Instance.new("TextLabel", frame)
+    header.Size = UDim2.new(1, 0, 0, 35)
+    header.BackgroundColor3 = Color3.fromRGB(35, 5, 5)
+    header.Text = "📜 Updates | Made by Anouar777x"
+    header.TextColor3 = Color3.fromRGB(255, 255, 255)
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 12
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+
+    local closeBtn = Instance.new("TextButton", header)
+    closeBtn.Size = UDim2.new(0, 25, 0, 25)
+    closeBtn.Position = UDim2.new(1, -30, 0, 5)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.MouseButton1Click:Connect(function() frame.Visible = false end)
+
+    local scroll = Instance.new("ScrollingFrame", frame)
+    scroll.Size = UDim2.new(1, -20, 1, -45)
+    scroll.Position = UDim2.new(0, 10, 0, 40)
+    scroll.BackgroundTransparency = 1
+    scroll.ScrollBarThickness = 2
+
+    local layout = Instance.new("UIListLayout", scroll)
+    layout.Padding = UDim.new(0, 6)
+
+    local function addLogEntry(date, text)
+        local logFrame = Instance.new("Frame", scroll)
+        logFrame.Size = UDim2.new(1, -5, 0, 50)
+        logFrame.BackgroundColor3 = Color3.fromRGB(30, 5, 5)
+        Instance.new("UICorner", logFrame).CornerRadius = UDim.new(0, 6)
+
+        local dateLabel = Instance.new("TextLabel", logFrame)
+        dateLabel.Size = UDim2.new(1, -10, 0, 20)
+        dateLabel.Position = UDim2.new(0, 5, 0, 2)
+        dateLabel.Text = "📅 " .. date
+        dateLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+        dateLabel.Font = Enum.Font.GothamBold
+        dateLabel.TextSize = 11
+        dateLabel.TextXAlignment = Enum.TextXAlignment.Left
+        dateLabel.BackgroundTransparency = 1
+
+        local textLabel = Instance.new("TextLabel", logFrame)
+        textLabel.Size = UDim2.new(1, -10, 0, 25)
+        textLabel.Position = UDim2.new(0, 5, 0, 20)
+        textLabel.Text = text
+        textLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+        textLabel.Font = Enum.Font.Gotham
+        textLabel.TextSize = 12
+        textLabel.TextXAlignment = Enum.TextXAlignment.Left
+        textLabel.BackgroundTransparency = 1
+    end
+
+    addLogEntry("Fast Hub Released", "Brand new Red/Black Theme")
+    addLogEntry("Made by Anouar777x", "Fixed Mobile Auto Farm & Touch Click Logic")
+
+    return frame
+end
+
+local function createReportUI(parent)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 220)
+    frame.Position = UDim2.new(0.5, -150, 0.5, -110)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 0, 0)
+    frame.BorderSizePixel = 0
+    frame.Visible = false
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = parent
+
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = Color3.fromRGB(220, 20, 20)
+
+    local header = Instance.new("TextLabel", frame)
+    header.Size = UDim2.new(1, 0, 0, 35)
+    header.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+    header.Text = "⚠️ Report Issue | Fast Hub"
+    header.TextColor3 = Color3.fromRGB(255, 255, 255)
+    header.Font = Enum.Font.GothamBold
+    header.TextSize = 13
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+
+    local closeBtn = Instance.new("TextButton", header)
+    closeBtn.Size = UDim2.new(0, 25, 0, 25)
+    closeBtn.Position = UDim2.new(1, -30, 0, 5)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.MouseButton1Click:Connect(function() frame.Visible = false end)
+
+    local textBox = Instance.new("TextBox", frame)
+    textBox.Size = UDim2.new(1, -20, 0, 100)
+    textBox.Position = UDim2.new(0, 10, 0, 48)
+    textBox.BackgroundColor3 = Color3.fromRGB(25, 5, 5)
+    textBox.Text = ""
+    textBox.PlaceholderText = "Describe the bug for Anouar777x..."
+    textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textBox.PlaceholderColor3 = Color3.fromRGB(150, 80, 80)
+    textBox.TextSize = 12
+    textBox.Font = Enum.Font.Gotham
+    textBox.TextWrapped = true
+    textBox.ClearTextOnFocus = false
+    textBox.TextYAlignment = Enum.TextYAlignment.Top
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", textBox).CornerRadius = UDim.new(0, 8)
+    Instance.new("UIPadding", textBox).PaddingTop = UDim.new(0, 6)
+
+    local sendBtn = Instance.new("TextButton", frame)
+    sendBtn.Size = UDim2.new(1, -20, 0, 38)
+    sendBtn.Position = UDim2.new(0, 10, 1, -48)
+    sendBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+    sendBtn.Text = "🚀 Send Report"
+    sendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sendBtn.Font = Enum.Font.GothamBold
+    sendBtn.TextSize = 13
+    Instance.new("UICorner", sendBtn).CornerRadius = UDim.new(0, 8)
+
+    sendBtn.MouseButton1Click:Connect(function()
+        local currentTime = os.time()
+        if currentTime - lastReportTime < 1800 then
+            local remainingMinutes = math.ceil((1800 - (currentTime - lastReportTime)) / 60)
+            notifyUser("⏳ Wait " .. remainingMinutes .. "m before reporting again.", "error")
+            return
+        end
+
+        if textBox.Text == "" or #textBox.Text < 5 then
+            notifyUser("❌ Please describe the problem properly!", "error")
+            return
+        end
+
+        local reportText = textBox.Text
+        sendBtn.Text = "⏳ Sending..."
+        sendBtn.Active = false
+
+        sendDiscordWebhook("🚨 New Report - Fast Hub", reportText)
+
+        lastReportTime = currentTime
+        textBox.Text = ""
+        frame.Visible = false
+        notifyUser("✅ Report sent to Anouar777x!", "success")
+
+        sendBtn.Text = "🚀 Send Report"
+        sendBtn.Active = true
+    end)
+
+    return frame
+end
+
+--------------------------------------------------------------------------------
+-- Main Script Execution & UI Initialization
+--------------------------------------------------------------------------------
+
+local function initScript()
+    loadGameModules()
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FastHub_Anouar777x"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local fishUI = createFishManagerUI(screenGui)
+    local changelogUI = createChangelogUI(screenGui)
+    local reportUI = createReportUI(screenGui)
+
+    -- Intro Screen
+    local introFrame = Instance.new("Frame", screenGui)
+    introFrame.Size = UDim2.new(0, 360, 0, 200)
+    introFrame.Position = UDim2.new(0.5, -180, 0.35, 0)
+    introFrame.BackgroundColor3 = Color3.fromRGB(15, 0, 0)
+    introFrame.BorderSizePixel = 0
+    introFrame.ZIndex = 5
+    Instance.new("UICorner", introFrame).CornerRadius = UDim.new(0, 16)
+
+    local stroke = Instance.new("UIStroke", introFrame)
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(220, 20, 20)
+
+    local avatar = Instance.new("ImageLabel", introFrame)
+    avatar.Size = UDim2.new(0, 65, 0, 65)
+    avatar.Position = UDim2.new(0.5, -32.5, 0.12, 0)
+    avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
+    avatar.ZIndex = 5
+    Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
+
+    local welcomeText = Instance.new("TextLabel", introFrame)
+    welcomeText.Size = UDim2.new(1, 0, 0, 30)
+    welcomeText.Position = UDim2.new(0, 0, 0.52, 0)
+    welcomeText.BackgroundTransparency = 1
+    welcomeText.Text = "Fast Hub"
+    welcomeText.TextColor3 = Color3.fromRGB(255, 40, 40)
+    welcomeText.Font = Enum.Font.GothamBlack
+    welcomeText.TextSize = 22
+    welcomeText.ZIndex = 5
+
+    local statusText = Instance.new("TextLabel", introFrame)
+    statusText.Size = UDim2.new(1, 0, 0, 20)
+    statusText.Position = UDim2.new(0, 0, 0.72, 0)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = "Made by Anouar777x"
+    statusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusText.Font = Enum.Font.GothamBold
+    statusText.TextSize = 14
+    statusText.ZIndex = 5
+
+    -- Device Selection Frame
+    local deviceFrame = Instance.new("Frame", screenGui)
+    deviceFrame.Size = UDim2.new(0, 340, 0, 190)
+    deviceFrame.Position = UDim2.new(0.5, -170, 0.35, 0)
+    deviceFrame.BackgroundColor3 = Color3.fromRGB(15, 0, 0)
+    deviceFrame.BorderSizePixel = 0
+    deviceFrame.Visible = false
+    Instance.new("UICorner", deviceFrame).CornerRadius = UDim.new(0, 16)
+    local devStroke = Instance.new("UIStroke", deviceFrame)
+    devStroke.Color = Color3.fromRGB(220, 20, 20)
+
+    local deviceQuestion = Instance.new("TextLabel", deviceFrame)
+    deviceQuestion.Size = UDim2.new(1, 0, 0, 45)
+    deviceQuestion.BackgroundTransparency = 1
+    deviceQuestion.Text = "Select Device | Fast Hub"
+    deviceQuestion.TextColor3 = Color3.fromRGB(255, 255, 255)
+    deviceQuestion.Font = Enum.Font.GothamBold
+    deviceQuestion.TextSize = 16
+
+    local mobileBtn = Instance.new("TextButton", deviceFrame)
+    mobileBtn.Size = UDim2.new(0, 120, 0, 80)
+    mobileBtn.Position = UDim2.new(0.5, -135, 0.4, 0)
+    mobileBtn.BackgroundColor3 = Color3.fromRGB(160, 20, 20)
+    mobileBtn.Text = "📱\nMobile"
+    mobileBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobileBtn.Font = Enum.Font.GothamBold
+    mobileBtn.TextSize = 16
+    Instance.new("UICorner", mobileBtn).CornerRadius = UDim.new(0, 12)
+
+    local pcBtn = Instance.new("TextButton", deviceFrame)
+    pcBtn.Size = UDim2.new(0, 120, 0, 80)
+    pcBtn.Position = UDim2.new(0.5, 15, 0.4, 0)
+    pcBtn.BackgroundColor3 = Color3.fromRGB(80, 10, 10)
+    pcBtn.Text = "💻\nPC"
+    pcBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pcBtn.Font = Enum.Font.GothamBold
+    pcBtn.TextSize = 16
+    Instance.new("UICorner", pcBtn).CornerRadius = UDim.new(0, 12)
+
+    -- PC GUI Window
+    local pcFrame = Instance.new("Frame", screenGui)
+    pcFrame.Size = UDim2.new(0, 420, 0, 280)
+    pcFrame.Position = UDim2.new(0.5, -210, 0.35, 0)
+    pcFrame.BackgroundColor3 = Color3.fromRGB(10, 0, 0)
+    pcFrame.BorderSizePixel = 0
+    pcFrame.Visible = false
+    pcFrame.Active = true
+    pcFrame.Draggable = true
+    Instance.new("UICorner", pcFrame).CornerRadius = UDim.new(0, 16)
+    local pcStroke = Instance.new("UIStroke", pcFrame)
+    pcStroke.Color = Color3.fromRGB(200, 20, 20)
+
+    local pcInner = Instance.new("Frame", pcFrame)
+    pcInner.Size = UDim2.new(1, -20, 1, -20)
+    pcInner.Position = UDim2.new(0, 10, 0, 10)
+    pcInner.BackgroundColor3 = Color3.fromRGB(20, 2, 2)
+    Instance.new("UICorner", pcInner).CornerRadius = UDim.new(0, 12)
+
+    local pcHeader = Instance.new("Frame", pcInner)
+    pcHeader.Size = UDim2.new(1, 0, 0, 45)
+    pcHeader.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+    Instance.new("UICorner", pcHeader).CornerRadius = UDim.new(0, 12)
+
+    local discordBtn = Instance.new("TextButton", pcHeader)
+    discordBtn.Size = UDim2.new(0, 32, 0, 32)
+    discordBtn.Position = UDim2.new(0, 6, 0, 6)
+    discordBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
+    discordBtn.Text = "🔗"
+    discordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    discordBtn.Font = Enum.Font.GothamBold
+    discordBtn.TextSize = 14
+    Instance.new("UICorner", discordBtn).CornerRadius = UDim.new(0, 8)
+
+    local fishMenuBtn = Instance.new("TextButton", pcHeader)
+    fishMenuBtn.Size = UDim2.new(0, 32, 0, 32)
+    fishMenuBtn.Position = UDim2.new(0, 42, 0, 6)
+    fishMenuBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+    fishMenuBtn.Text = "🐟"
+    fishMenuBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    fishMenuBtn.Font = Enum.Font.GothamBold
+    fishMenuBtn.TextSize = 14
+    Instance.new("UICorner", fishMenuBtn).CornerRadius = UDim.new(0, 8)
+
+    local changelogBtn = Instance.new("TextButton", pcHeader)
+    changelogBtn.Size = UDim2.new(0, 32, 0, 32)
+    changelogBtn.Position = UDim2.new(0, 78, 0, 6)
+    changelogBtn.BackgroundColor3 = Color3.fromRGB(100, 10, 10)
+    changelogBtn.Text = "📜"
+    changelogBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    changelogBtn.Font = Enum.Font.GothamBold
+    changelogBtn.TextSize = 14
+    Instance.new("UICorner", changelogBtn).CornerRadius = UDim.new(0, 8)
+
+    local reportBtn = Instance.new("TextButton", pcHeader)
+    reportBtn.Size = UDim2.new(0, 32, 0, 32)
+    reportBtn.Position = UDim2.new(0, 114, 0, 6)
+    reportBtn.BackgroundColor3 = Color3.fromRGB(220, 20, 20)
+    reportBtn.Text = "⚠️"
+    reportBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    reportBtn.Font = Enum.Font.GothamBold
+    reportBtn.TextSize = 14
+    Instance.new("UICorner", reportBtn).CornerRadius = UDim.new(0, 8)
+
+    local pcTitle = Instance.new("TextLabel", pcHeader)
+    pcTitle.Size = UDim2.new(1, -200, 1, 0)
+    pcTitle.Position = UDim2.new(0, 155, 0, 0)
+    pcTitle.BackgroundTransparency = 1
+    pcTitle.Text = "Fast Hub | Made by Anouar777x"
+    pcTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pcTitle.Font = Enum.Font.GothamBold
+    pcTitle.TextSize = 13
+    pcTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closePcBtn = Instance.new("TextButton", pcHeader)
+    closePcBtn.Size = UDim2.new(0, 40, 1, 0)
+    closePcBtn.Position = UDim2.new(1, -40, 0, 0)
+    closePcBtn.BackgroundTransparency = 1
+    closePcBtn.Text = "✕"
+    closePcBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+    closePcBtn.Font = Enum.Font.GothamBold
+    closePcBtn.TextSize = 18
+
+    local keybindContainer = Instance.new("Frame", pcInner)
+    keybindContainer.Size = UDim2.new(1, -40, 0, 80)
+    keybindContainer.Position = UDim2.new(0, 20, 0.4, -30)
+    keybindContainer.BackgroundTransparency = 1
+
+    local keyDisplayBtn = Instance.new("TextButton", keybindContainer)
+    keyDisplayBtn.Size = UDim2.new(0, 160, 1, 0)
+    keyDisplayBtn.BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+    keyDisplayBtn.Text = "Q"
+    keyDisplayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    keyDisplayBtn.Font = Enum.Font.GothamBlack
+    keyDisplayBtn.TextSize = 40
+    Instance.new("UICorner", keyDisplayBtn).CornerRadius = UDim.new(0, 16)
+
+    local rebindBtn = Instance.new("TextButton", keybindContainer)
+    rebindBtn.Size = UDim2.new(0, 110, 1, 0)
+    rebindBtn.Position = UDim2.new(1, -110, 0, 0)
+    rebindBtn.BackgroundColor3 = Color3.fromRGB(50, 5, 5)
+    rebindBtn.Text = "🔄 Bind Key"
+    rebindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rebindBtn.Font = Enum.Font.GothamBold
+    rebindBtn.TextSize = 14
+    Instance.new("UICorner", rebindBtn).CornerRadius = UDim.new(0, 16)
+
+    local autoFarmContainer = Instance.new("Frame", pcInner)
+    autoFarmContainer.Size = UDim2.new(1, -40, 0, 55)
+    autoFarmContainer.Position = UDim2.new(0, 20, 0.82, -50)
+    autoFarmContainer.BackgroundTransparency = 1
+
+    local pcAutoFarmBtn = Instance.new("TextButton", autoFarmContainer)
+    pcAutoFarmBtn.Size = UDim2.new(1, 0, 1, 0)
+    pcAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(120, 15, 15)
+    pcAutoFarmBtn.Text = "🤖 Auto Farm [OFF]"
+    pcAutoFarmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pcAutoFarmBtn.Font = Enum.Font.GothamBold
+    pcAutoFarmBtn.TextSize = 15
+    Instance.new("UICorner", pcAutoFarmBtn).CornerRadius = UDim.new(0, 14)
+
+    local keybindLabel = Instance.new("TextLabel", pcInner)
+    keybindLabel.Size = UDim2.new(1, -20, 0, 25)
+    keybindLabel.Position = UDim2.new(0, 10, 1, -28)
+    keybindLabel.BackgroundTransparency = 1
+    keybindLabel.Text = "Current Bind: Q | Fast Hub"
+    keybindLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+    keybindLabel.Font = Enum.Font.Gotham
+    keybindLabel.TextSize = 12
+
+    -- Mobile GUI Window
+    local mobileFrame = Instance.new("Frame", screenGui)
+    mobileFrame.Size = UDim2.new(0, 280, 0, 280)
+    mobileFrame.Position = UDim2.new(0, 15, 0.35, 0)
+    mobileFrame.BackgroundColor3 = Color3.fromRGB(10, 0, 0)
+    mobileFrame.BorderSizePixel = 0
+    mobileFrame.Visible = false
+    mobileFrame.Active = true
+    mobileFrame.Draggable = true
+    Instance.new("UICorner", mobileFrame).CornerRadius = UDim.new(0, 16)
+    local mobStroke = Instance.new("UIStroke", mobileFrame)
+    mobStroke.Color = Color3.fromRGB(220, 20, 20)
+
+    local mobInner = Instance.new("Frame", mobileFrame)
+    mobInner.Size = UDim2.new(1, -16, 1, -16)
+    mobInner.Position = UDim2.new(0, 8, 0, 8)
+    mobInner.BackgroundColor3 = Color3.fromRGB(20, 2, 2)
+    Instance.new("UICorner", mobInner).CornerRadius = UDim.new(0, 12)
+
+    local mobHeader = Instance.new("Frame", mobInner)
+    mobHeader.Size = UDim2.new(1, 0, 0, 40)
+    mobHeader.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+    Instance.new("UICorner", mobHeader).CornerRadius = UDim.new(0, 12)
+
+    local mobTitle = Instance.new("TextLabel", mobHeader)
+    mobTitle.Size = UDim2.new(1, -80, 1, 0)
+    mobTitle.Position = UDim2.new(0, 12, 0, 0)
+    mobTitle.BackgroundTransparency = 1
+    mobTitle.Text = "Fast Hub | Anouar777x"
+    mobTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobTitle.Font = Enum.Font.GothamBold
+    mobTitle.TextSize = 12
+    mobTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+    local mobFishBtn = Instance.new("TextButton", mobHeader)
+    mobFishBtn.Size = UDim2.new(0, 30, 0, 30)
+    mobFishBtn.Position = UDim2.new(1, -75, 0, 5)
+    mobFishBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+    mobFishBtn.Text = "🐟"
+    mobFishBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobFishBtn.Font = Enum.Font.GothamBold
+    mobFishBtn.TextSize = 14
+    Instance.new("UICorner", mobFishBtn).CornerRadius = UDim.new(0, 6)
+
+    local closeMobBtn = Instance.new("TextButton", mobHeader)
+    closeMobBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeMobBtn.Position = UDim2.new(1, -38, 0, 5)
+    closeMobBtn.BackgroundColor3 = Color3.fromRGB(220, 20, 20)
+    closeMobBtn.Text = "✕"
+    closeMobBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeMobBtn.Font = Enum.Font.GothamBold
+    closeMobBtn.TextSize = 14
+    Instance.new("UICorner", closeMobBtn).CornerRadius = UDim.new(0, 6)
+
+    local mobAutoFarmBtn = Instance.new("TextButton", mobInner)
+    mobAutoFarmBtn.Size = UDim2.new(1, -24, 0, 40)
+    mobAutoFarmBtn.Position = UDim2.new(0, 12, 0, 50)
+    mobAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(120, 15, 15)
+    mobAutoFarmBtn.Text = "🤖 Auto Farm [OFF]"
+    mobAutoFarmBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobAutoFarmBtn.Font = Enum.Font.GothamBold
+    mobAutoFarmBtn.TextSize = 13
+    Instance.new("UICorner", mobAutoFarmBtn).CornerRadius = UDim.new(0, 8)
+
+    local mobTargetCircleBtn = Instance.new("TextButton", mobInner)
+    mobTargetCircleBtn.Size = UDim2.new(1, -24, 0, 40)
+    mobTargetCircleBtn.Position = UDim2.new(0, 12, 0, 95)
+    mobTargetCircleBtn.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+    mobTargetCircleBtn.Text = "🎯 Target Circle [OFF]"
+    mobTargetCircleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobTargetCircleBtn.Font = Enum.Font.GothamBold
+    mobTargetCircleBtn.TextSize = 12
+    Instance.new("UICorner", mobTargetCircleBtn).CornerRadius = UDim.new(0, 8)
+
+    local mobChangelogBtn = Instance.new("TextButton", mobInner)
+    mobChangelogBtn.Size = UDim2.new(1, -24, 0, 38)
+    mobChangelogBtn.Position = UDim2.new(0, 12, 0, 140)
+    mobChangelogBtn.BackgroundColor3 = Color3.fromRGB(150, 20, 20)
+    mobChangelogBtn.Text = "📜 View Updates"
+    mobChangelogBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobChangelogBtn.Font = Enum.Font.GothamBold
+    mobChangelogBtn.TextSize = 12
+    Instance.new("UICorner", mobChangelogBtn).CornerRadius = UDim.new(0, 8)
+
+    local mobReportBtn = Instance.new("TextButton", mobInner)
+    mobReportBtn.Size = UDim2.new(1, -24, 0, 38)
+    mobReportBtn.Position = UDim2.new(0, 12, 0, 183)
+    mobReportBtn.BackgroundColor3 = Color3.fromRGB(220, 20, 20)
+    mobReportBtn.Text = "⚠️ Report Bug"
+    mobReportBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobReportBtn.Font = Enum.Font.GothamBold
+    mobReportBtn.TextSize = 12
+    Instance.new("UICorner", mobReportBtn).CornerRadius = UDim.new(0, 8)
+
+    local mobDiscordBtn = Instance.new("TextButton", mobInner)
+    mobDiscordBtn.Size = UDim2.new(1, -24, 0, 35)
+    mobDiscordBtn.Position = UDim2.new(0, 12, 0, 226)
+    mobDiscordBtn.BackgroundColor3 = Color3.fromRGB(70, 10, 10)
+    mobDiscordBtn.Text = "🔗 Copy Discord Link"
+    mobDiscordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mobDiscordBtn.Font = Enum.Font.GothamBold
+    mobDiscordBtn.TextSize = 12
+    Instance.new("UICorner", mobDiscordBtn).CornerRadius = UDim.new(0, 8)
+
+    -- Event Connections
+    task.delay(2.5, function()
+        TweenService:Create(introFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(avatar, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { ImageTransparency = 1 }):Play()
+        TweenService:Create(welcomeText, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { TextTransparency = 1 }):Play()
+        TweenService:Create(statusText, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { TextTransparency = 1 }):Play()
+        pcall(function() stroke.Enabled = false end)
+        task.wait(0.5)
+        introFrame:Destroy()
+        deviceFrame.Visible = true
+    end)
+
+    local function copyDiscordLink()
+        if setclipboard then
+            setclipboard(DiscordInvite)
+            notifyUser("✅ Discord link copied!", "success")
+        end
+    end
+
+    discordBtn.MouseButton1Click:Connect(copyDiscordLink)
+    mobDiscordBtn.MouseButton1Click:Connect(copyDiscordLink)
+
+    changelogBtn.MouseButton1Click:Connect(function() changelogUI.Visible = not changelogUI.Visible end)
+    mobChangelogBtn.MouseButton1Click:Connect(function() changelogUI.Visible = not changelogUI.Visible end)
+
+    reportBtn.MouseButton1Click:Connect(function() reportUI.Visible = not reportUI.Visible end)
+    mobReportBtn.MouseButton1Click:Connect(function() reportUI.Visible = not reportUI.Visible end)
+
+    fishMenuBtn.MouseButton1Click:Connect(function() fishUI.Visible = not fishUI.Visible end)
+    mobFishBtn.MouseButton1Click:Connect(function() fishUI.Visible = not fishUI.Visible end)
+
+    closePcBtn.MouseButton1Click:Connect(function() pcFrame.Visible = false end)
+    closeMobBtn.MouseButton1Click:Connect(function() mobileFrame.Visible = false end)
+
+    mobileBtn.MouseButton1Click:Connect(function()
+        deviceType = "Mobile"
+        deviceFrame.Visible = false
+        mobileFrame.Visible = true
+        
+        showTargetCircle = true
+        if not targetCircleFrame then
+            targetCircleFrame = createTargetCircle(screenGui)
+        else
+            targetCircleFrame.Visible = true
+        end
+        mobTargetCircleBtn.Text = "🎯 Target Circle [ON]"
+        mobTargetCircleBtn.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
+
+        notifyUser("📱 Mobile Mode Activated", "success")
+    end)
+
+    pcBtn.MouseButton1Click:Connect(function()
+        showTargetCircle = false
+        deviceType = "PC"
+        deviceFrame.Visible = false
+        pcFrame.Visible = true
+        if targetCircleFrame then
+            targetCircleFrame.Visible = false
+        end
+        notifyUser("💻 PC Mode Activated", "success")
+    end)
+
+    rebindBtn.MouseButton1Click:Connect(function()
+        if not isSettingKey then
+            isSettingKey = true
+            rebindBtn.Text = "⌨️ Press Key..."
+            keyDisplayBtn.Text = "?"
+
+            local connection
+            connection = UserInputService.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.Keyboard then
+                    toggleKey = input.KeyCode
+                    keyDisplayBtn.Text = tostring(toggleKey.Name)
+                    keybindLabel.Text = "Current Bind: " .. tostring(toggleKey.Name)
+                    rebindBtn.Text = "🔄 Bind Key"
+                    isSettingKey = false
+                    connection:Disconnect()
+                end
+            end)
+        end
+    end)
+
+    local function updateAutoFarmUI()
+        toggleAutoFarm()
+        if autoFarmRunning then
+            pcAutoFarmBtn.Text = "🤖 Auto Farm [ON]"
+            pcAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
+            mobAutoFarmBtn.Text = "🤖 Auto Farm [ON]"
+            mobAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
+        else
+            pcAutoFarmBtn.Text = "🤖 Auto Farm [OFF]"
+            pcAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(120, 15, 15)
+            mobAutoFarmBtn.Text = "🤖 Auto Farm [OFF]"
+            mobAutoFarmBtn.BackgroundColor3 = Color3.fromRGB(120, 15, 15)
+        end
+    end
+
+    pcAutoFarmBtn.MouseButton1Click:Connect(updateAutoFarmUI)
+    mobAutoFarmBtn.MouseButton1Click:Connect(updateAutoFarmUI)
+
+    mobTargetCircleBtn.MouseButton1Click:Connect(function()
+        showTargetCircle = not showTargetCircle
+        if showTargetCircle then
+            mobTargetCircleBtn.Text = "🎯 Target Circle [ON]"
+            mobTargetCircleBtn.BackgroundColor3 = Color3.fromRGB(200, 20, 20)
+            if not targetCircleFrame then
+                targetCircleFrame = createTargetCircle(screenGui)
+            else
+                targetCircleFrame.Visible = true
+            end
+        else
+            mobTargetCircleBtn.Text = "🎯 Target Circle [OFF]"
+            mobTargetCircleBtn.BackgroundColor3 = Color3.fromRGB(40, 5, 5)
+            if targetCircleFrame then
+                targetCircleFrame.Visible = false
+            end
+        end
+    end)
+end
+
+-- Hook inventory update signals
+Data.hook("items", function()
+    if autoDropEnabled then
+        task.spawn(dropFilteredFish)
+    end
+end)
+
+initScript()
