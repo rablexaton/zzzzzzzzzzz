@@ -13,8 +13,8 @@ local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
 
 -- Global Variables & State
-local WebhookURL = "https://discordapp.com/api/webhooks/1532759951271792660/ZJM3S4tnILI76c5lp84GW1b_1wtp9E1e2F_1tFpOjsFeT5A-_DVqmpAQw7Xe3TvWozQl"
-local DiscordInvite = "https://discord.gg/HrjhFbS8tc"
+local WebhookURL = "https://discordapp.com/api/webhooks/1534578366643179735/UmV-D4xIJzLI7TbIj8AKc49g0GCA6okTJLqP9hGH0v_ZXcFUtLcyx8ujToMntYyMsbgP"
+local DiscordInvite = "https://discord.gg/HaFvBFTvu9"
 
 local lastReportTime = 0
 local autoDropEnabled = false
@@ -192,7 +192,7 @@ local function dropFilteredFish()
                     if targetFishList[item.name] then
                         for _ = 1, item.amount or 1 do
                             dropItem(item.guid)
-                            task.wait(0.05)
+                            task.wait(0.10)
                         end
                     end
                 end
@@ -333,9 +333,9 @@ local function startAutoFarm()
                 if isMinigameActive() then
                     winMinigame()
                     while autoFarmRunning and isMinigameActive() do
-                        task.wait(0.05)
+                        task.wait(0.10)
                     end
-                    task.wait(0.8)
+                    task.wait(2.8)
                     if autoFarmRunning then
                         performClick()
                     end
