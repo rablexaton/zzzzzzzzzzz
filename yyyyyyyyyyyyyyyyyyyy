@@ -333,7 +333,7 @@ local function startAutoFarm()
                 if isMinigameActive() then
                     winMinigame()
                     while autoFarmRunning and isMinigameActive() do
-                        task.wait(0.10)
+                        task.wait(0.20)
                     end
                     task.wait(2.8)
                     if autoFarmRunning then
@@ -341,7 +341,7 @@ local function startAutoFarm()
                     end
                 else
                     performClick()
-                    task.wait(1.5)
+                    task.wait(3.2)
                 end
                 task.wait(0.1)
             end
