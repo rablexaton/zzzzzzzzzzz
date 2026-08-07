@@ -331,17 +331,26 @@ local function startAutoFarm()
 
             while autoFarmRunning do
                 if isMinigameActive() then
+                    -- Très léger délai anti-détection/ping pour ne pas rater le timing
+                    task.wait(0.8) 
+                    
+                    -- Exécute la victoire puis effectue un clic physique de sécurité
                     winMinigame()
-                    while autoFarmRunning and isMinigameActive() do
-                        task.wait(1.15)
+                    performClick()
+
+                    local timeout = 0
+                    while autoFarmRunning and isMinigameActive() and timeout < 20 do
+                        task.wait(0.1)
+                        timeout = timeout + 1
                     end
-                    task.wait(3.1)
+
+                    task.wait(2.5)
                     if autoFarmRunning then
                         performClick()
                     end
                 else
                     performClick()
-                    task.wait(3.5)
+                    task.wait(3.0)
                 end
                 task.wait(0.1)
             end
@@ -704,8 +713,8 @@ local function createChangelogUI(parent)
         textLabel.BackgroundTransparency = 1
     end
 
-    addLogEntry("Fast Hub Released", "Brand new Red/Black Theme")
-    addLogEntry("Made by Anouar777x", "Fixed Mobile Auto Farm & Touch Click Logic")
+    addLogEntry("Fast Hub Released", "ANOUAR777X")
+    addLogEntry("Made by Anouar777x", "Fixed Mobile Auto Farm & Touch Click ")
 
     return frame
 end
