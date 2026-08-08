@@ -1,6 +1,8 @@
 loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/anouuuuuuuuuuuuu/refs/heads/main/uuuuuuuuuuuuuuuuuuuu"))()
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/yoooooooooo/refs/heads/main/uuuuuuuuuuuuu"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/NEWA/refs/heads/main/JDIDA"))()
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/rablexaton/HAYDIHA-NAMA/refs/heads/main/EEEEEEEEEEEEEEEEEEEEEEEE"))()
 
 -- Services
 local Players = game:GetService("Players")
